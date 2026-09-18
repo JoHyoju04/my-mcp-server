@@ -1,27 +1,19 @@
 import { InferenceClient } from '@huggingface/inference'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 
-const SERVER_NAME = 'typescript-mcp-server'
-const SERVER_VERSION = '1.0.0'
+export const SERVER_NAME = 'typescript-mcp-server'
+export const SERVER_VERSION = '1.0.0'
 
-// Create server instance
-const server = new McpServer(
-    {
-        name: SERVER_NAME,
-        version: SERVER_VERSION
-    },
-    {
-        capabilities: {
-            tools: {},
-            resources: {},
-            prompts: {}
-        }
-    }
-)
+interface RegisterMcpServerOptions {
+    hfToken?: string
+}
 
-server.registerTool(
+export function registerMcpServer(
+    server: McpServer,
+    { hfToken }: RegisterMcpServerOptions = {}
+): void {
+    server.registerTool(
     'greet',
     {
         description: '이름과 언어를 입력하면 인사말을 반환합니다.',
@@ -620,23 +612,23 @@ server.registerTool(
         })
     },
     async ({ prompt, num_inference_steps }) => {
-        const hfToken = process.env.HF_TOKEN
-        if (!hfToken) {
+        const normalizedHfToken = hfToken?.trim()
+        if (!normalizedHfToken) {
             return {
                 content: [
                     {
                         type: 'text' as const,
-                        text: 'HF_TOKEN 환경변수가 설정되지 않았습니다.'
+                        text: 'x-hf-token 요청 헤더가 필요합니다.'
                     }
                 ]
             }
         }
 
         try {
-            const client = new InferenceClient(hfToken)
+            const client = new InferenceClient(normalizedHfToken)
             const image = await client.textToImage(
                 {
-                    provider: 'together',
+                    provider: 'fal-ai',
                     model: 'black-forest-labs/FLUX.1-schnell',
                     inputs: prompt,
                     parameters: { num_inference_steps }
@@ -690,8 +682,9 @@ server.registerResource(
             region: 'ap-northeast-2',
             datacenter: 'fake-seoul-1',
             transport: {
-                type: 'stdio',
-                protocol: 'MCP'
+                type: 'streamable-http',
+                protocol: 'MCP over HTTP',
+                endpoint: '/api/mcp'
             },
             capabilities: {
                 tools: true,
@@ -849,7 +842,7 @@ server.registerPrompt(
         title: '단계적 코드 리뷰',
         description:
             '코드를 입력받아 언어와 상관없이 실행 경로부터 안정성, 보안, 구조까지 단계적으로 상세 리뷰합니다.',
-        argsSchema: {
+        argsSchema: z.object({
             code: z.string().describe('리뷰할 코드'),
             language: z
                 .string()
@@ -863,7 +856,7 @@ server.registerPrompt(
                 .describe(
                     '특별히 보고 싶은 초점. 예: 보안, 동시성, 성능, API 설계 (선택)'
                 )
-        }
+        })
     },
     ({ code, language, focus }) => ({
         description:
@@ -878,11 +871,5 @@ server.registerPrompt(
             }
         ]
     })
-)
-
-server
-    .connect(new StdioServerTransport())
-    .catch(console.error)
-    .then(() => {
-        console.log('MCP server started')
-    })
+    )
+}
